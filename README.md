@@ -47,3 +47,53 @@ Este teste busca avaliar as seguintes competências:
 - Capacidade de lidar com contêineres Docker.
 
 O tempo proposto para a conclusão deste desafio técnico é de 1 (um) dia.
+
+# Gerenciamento da Aplicação com `manage.sh`
+
+O script `manage.sh` facilita a execução dos principais comandos relacionados ao Docker Compose e à execução de testes da aplicação.
+
+## Como utilizar o script
+
+Certifique-se de que o arquivo `manage.sh` tenha permissões de execução. Execute no terminal:
+
+```bash
+chmod +x manage.sh
+```
+
+## Comandos Disponíveis
+
+| Comando       | Descrição                                       |
+|---------------|-------------------------------------------------|
+| `./manage.sh start`   | 🚀 Inicia a aplicação usando Docker Compose. |
+| `./manage.sh stop`    | 🛑 Para todos os containers Docker.          |
+| `./manage.sh restart` | 🔄 Reinicia os containers da aplicação.     |
+| `./manage.sh build`   | 📦 Constrói as imagens Docker novamente.    |
+| `./manage.sh test`    | ✅ Executa testes unitários da aplicação.  |
+
+## Exemplos de Uso
+
+### Iniciar a aplicação
+```bash
+./manage.sh start
+```
+
+### Parar a aplicação
+```bash
+./manage.sh stop
+```
+
+### Reiniciar a aplicação
+```bash
+./manage.sh restart
+```
+
+### Construir novamente as imagens Docker
+```bash
+./manage.sh build
+```
+
+### Executar testes unitários
+```bash
+./manage.sh test
+```
+
