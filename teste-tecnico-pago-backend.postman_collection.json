@@ -1,0 +1,108 @@
+{
+	"info": {
+		"_postman_id": "51591232-c0d8-4ead-a969-1a77fa3110b4",
+		"name": "teste-tecnico-pago-backend",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "14568315"
+	},
+	"item": [
+		{
+			"name": "post-video",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "video",
+							"type": "file",
+							"src": "/videos/videoplayback.mp4"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{url}}/api/upload/video",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"api",
+						"upload",
+						"video"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "get-video",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [
+					{
+						"key": "Range",
+						"value": "bytes=0-100000",
+						"type": "text"
+					}
+				],
+				"url": {
+					"raw": "{{url}}/static/video/videoplayback.mp4",
+					"host": [
+						"{{url}}"
+					],
+					"path": [
+						"static",
+						"video",
+						"videoplayback.mp4"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "Port",
+			"value": "3000",
+			"type": "default",
+			"disabled": true
+		},
+		{
+			"key": "Uri",
+			"value": "http://localhost",
+			"type": "default",
+			"disabled": true
+		},
+		{
+			"key": "url",
+			"value": "http://localhost:3000/api",
+			"type": "default"
+		}
+	]
+}

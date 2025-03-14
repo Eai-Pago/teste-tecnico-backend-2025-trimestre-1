@@ -5,20 +5,20 @@ Teste técnico para a posição de Backend Dev. Edição do primeiro trimestre d
 
 A ideia é bem simples:
 
-- [ ] uma rota `POST /upload/video` que recebe um **único vídeo** com limite de 10MB e
-    - [ ] retornando o código de status 400 em caso de arquivo com tipo diferente de vídeo
-    - [ ] retornando o código de status 400 em caso de arquivo com tamanho maior que 10MB
-    - [ ] retornando o código de status 204 em caso de sucesso
-- [ ] uma rota `GET /static/video/:filename` que pode receber um Range por cabeçalho para indicar o offset de streaming
-    - [ ] retornando o código de status 404 em caso de não existência de um arquivo
-    - [ ] retornando o conteúdo completo caso nenhum range seja especificado com código de status 200 em caso o arquivo exista no servidor
-    - [ ] retornando a fatia desejada do conteúdo caso o range seja especificado com código de status 206
+- [x] uma rota `POST /upload/video` que recebe um **único vídeo** com limite de 10MB e
+    - [x] retornando o código de status 400 em caso de arquivo com tipo diferente de vídeo
+    - [x] retornando o código de status 400 em caso de arquivo com tamanho maior que 10MB
+    - [x] retornando o código de status 204 em caso de sucesso
+- [x] uma rota `GET /static/video/:filename` que pode receber um Range por cabeçalho para indicar o offset de streaming
+    - [x] retornando o código de status 404 em caso de não existência de um arquivo
+    - [x] retornando o conteúdo completo caso nenhum range seja especificado com código de status 200 em caso o arquivo exista no servidor
+    - [x] retornando a fatia desejada do conteúdo caso o range seja especificado com código de status 206
     caso o arquivo exista no servidor
 
 Para infra, vamos usar o seguinte conjunto:
 
-- [ ] um arquivo `Dockerfile` para fazer o build da imagem a partir da imagem `node:22-alpine`;
-- [ ] um arquivo `docker-compose.yml` para compor um ambiente com algum serviço de cache de sua escolha.
+- [x] um arquivo `Dockerfile` para fazer o build da imagem a partir da imagem `node:22-alpine`;
+- [x] um arquivo `docker-compose.yml` para compor um ambiente com algum serviço de cache de sua escolha.
 
 ```plain
 A ideia inicial é que os arquivos sejam armazenados dentro do volume do container da aplicação.
@@ -47,3 +47,53 @@ Este teste busca avaliar as seguintes competências:
 - Capacidade de lidar com contêineres Docker.
 
 O tempo proposto para a conclusão deste desafio técnico é de 1 (um) dia.
+
+# Gerenciamento da Aplicação com `d.sh`
+
+O script `d.sh` facilita a execução dos principais comandos relacionados ao Docker Compose e à execução de testes da aplicação.
+
+## Como utilizar o script
+
+Certifique-se de que o arquivo `d.sh` tenha permissões de execução. Execute no terminal:
+
+```bash
+chmod +x d.sh
+```
+
+## Comandos Disponíveis
+
+| Comando       | Descrição                                       |
+|---------------|-------------------------------------------------|
+| `./d.sh start`   | 🚀 Inicia a aplicação usando Docker Compose. |
+| `./d.sh stop`    | 🛑 Para todos os containers Docker.          |
+| `./d.sh restart` | 🔄 Reinicia os containers da aplicação.     |
+| `./d.sh build`   | 📦 Constrói as imagens Docker novamente.    |
+| `./d.sh test`    | ✅ Executa testes unitários da aplicação.  |
+
+## Exemplos de Uso
+
+### Iniciar a aplicação
+```bash
+./d.sh start
+```
+
+### Parar a aplicação
+```bash
+./d.sh stop
+```
+
+### Reiniciar a aplicação
+```bash
+./d.sh restart
+```
+
+### Construir novamente as imagens Docker
+```bash
+./d.sh build
+```
+
+### Executar testes unitários
+```bash
+./d.sh test
+```
+
