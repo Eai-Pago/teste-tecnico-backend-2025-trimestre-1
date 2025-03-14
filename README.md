@@ -47,3 +47,53 @@ Este teste busca avaliar as seguintes competências:
 - Capacidade de lidar com contêineres Docker.
 
 O tempo proposto para a conclusão deste desafio técnico é de 1 (um) dia.
+
+# Gerenciamento da Aplicação com `d.sh`
+
+O script `d.sh` facilita a execução dos principais comandos relacionados ao Docker Compose e à execução de testes da aplicação.
+
+## Como utilizar o script
+
+Certifique-se de que o arquivo `d.sh` tenha permissões de execução. Execute no terminal:
+
+```bash
+chmod +x d.sh
+```
+
+## Comandos Disponíveis
+
+| Comando       | Descrição                                       |
+|---------------|-------------------------------------------------|
+| `./d.sh start`   | 🚀 Inicia a aplicação usando Docker Compose. |
+| `./d.sh stop`    | 🛑 Para todos os containers Docker.          |
+| `./d.sh restart` | 🔄 Reinicia os containers da aplicação.     |
+| `./d.sh build`   | 📦 Constrói as imagens Docker novamente.    |
+| `./d.sh test`    | ✅ Executa testes unitários da aplicação.  |
+
+## Exemplos de Uso
+
+### Iniciar a aplicação
+```bash
+./d.sh start
+```
+
+### Parar a aplicação
+```bash
+./d.sh stop
+```
+
+### Reiniciar a aplicação
+```bash
+./d.sh restart
+```
+
+### Construir novamente as imagens Docker
+```bash
+./d.sh build
+```
+
+### Executar testes unitários
+```bash
+./d.sh test
+```
+
