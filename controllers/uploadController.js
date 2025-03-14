@@ -36,10 +36,8 @@ export default function createUploadRouter(redisClient) {
       const file = req.file;
       const fileName = file.originalname;
 
-      // Armazena no Redis
       await redisClient.set(`video:file:${fileName}`, file.buffer.toString('base64'), { EX: 3600 });
 
-      // Persistência no sistema de arquivos (em background)
       const savePath = join(uploadDir, fileName);
       setImmediate(() => {
         writeFileSync(savePath, file.buffer);

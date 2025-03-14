@@ -22,7 +22,6 @@ export default function createStreamRouter(redisClient) {
       return res.end(videoBuffer);
     }
 
-    // Caso não exista no cache, busca do disco
     const videoPath = path.resolve('uploads', sanitizedFilename);
 
     if (!fs.existsSync(videoPath)) {
