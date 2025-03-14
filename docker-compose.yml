@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .               
+    ports:
+      - "3000:3000"        
+    volumes:
+      - ./videos:/app/videos
+    depends_on:
+      - redis             
+    environment:
+      - NODE_ENV=development
+      - REDIS_HOST=redis  
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
