@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "description": "Teste técnico para a posição de Backend Dev. Edição do primeiro trimestre de 2025.",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon src/app.js",
-    "start": "node src/app.js"
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
   },
   "keywords": [],
   "author": "",

@@ -1,13 +1,24 @@
-import express from 'express'
-import uploadRoute from './routes/upload.js'
-import streamRoute from './routes/stream.js'
+import express from 'express';
+import dotenv from 'dotenv';
+import path from 'path';
+import uploadRoutes from './routes/upload.js';
+import streamRoutes from './routes/stream.js';
 
-const app = express()
+dotenv.config();
 
-app.use('/upload', uploadRoute)
-app.use('/static', streamRoute)
+const app = express();
 
-const PORT = process.env.PORT || 3000
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`)
-})
+app.use(express.json());
+
+if (!process.env.VIDEO_STORAGE_PATH) {
+  process.env.VIDEO_STORAGE_PATH = path.join(process.cwd(), 'videos');
+}
+
+app.use('/upload', uploadRoutes);
+app.use('/static', streamRoutes);
+
+app.get('/', (req, res) => {
+  res.send('API de Upload e Streaming de Vídeos rodando!');
+});
+
+export default app;
