@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video-backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./videos:/app/videos
+    environment:
+      - PORT=3000
+      - VIDEO_STORAGE_PATH=/app/videos
+      - CACHE_TTL_SECONDS=60
+    restart: unless-stopped

@@ -1,0 +1,23 @@
+{
+  "name": "teste-tecnico-backend-2025-trimestre-1",
+  "version": "1.0.0",
+  "description": "Teste técnico para a posição de Backend Dev. Edição do primeiro trimestre de 2025.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon src/app.js",
+    "start": "node src/app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.1",
+    "node-cache": "^5.1.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

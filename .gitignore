@@ -1,0 +1,41 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# dotenv
+.env
+
+# Logs
+logs/
+*.log
+log.txt
+
+# Docker
+*.local
+docker-compose.override.yml
+
+# Runtime
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Output
+dist/
+build/
+coverage/
+
+# Videos (output folder)
+videos/
