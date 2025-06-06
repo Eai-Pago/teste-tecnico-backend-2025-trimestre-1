@@ -9,12 +9,6 @@ const MAX_SIZE = 10 * 1024 * 1024;
 const storage = multer.memoryStorage(); 
 const upload = multer({
   storage,
-  fileFilter: (_, file, cb) => {
-    if (!file.mimetype.startsWith('video/')) {
-      return cb(new Error('Invalid file type'), false);
-    }
-    cb(null, true);
-  }
 });
 
 router.post('/video', upload.single('video'), async (req, res) => {
@@ -22,6 +16,12 @@ router.post('/video', upload.single('video'), async (req, res) => {
     if (!req.file) {
       return res.status(400).send('Arquivo inválido.');
     }
+
+    const validMimeTypes = ['video/mp4', 'video/webm', 'video/ogg'];
+    if (!validMimeTypes.includes(req.file.mimetype)) {
+      return res.status(400).send('Tipo de arquivo não suportado. Envie um vídeo.');
+    }
+
 
     if (req.file.size > MAX_SIZE) {
       return res.status(400).send('Arquivo excede o limite de 10MB.');
