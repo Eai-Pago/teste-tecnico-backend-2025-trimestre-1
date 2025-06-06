@@ -1,24 +1,25 @@
 # teste-tecnico-backend-2025-trimestre-1
+
 Teste técnico para a posição de Backend Dev. Edição do primeiro trimestre de 2025.
 
 ## A proposta: Upload e Streaming de Vídeos + Cache + Docker
 
 A ideia é bem simples:
 
-- [ ] uma rota `POST /upload/video` que recebe um **único vídeo** com limite de 10MB e
-    - [ ] retornando o código de status 400 em caso de arquivo com tipo diferente de vídeo
-    - [ ] retornando o código de status 400 em caso de arquivo com tamanho maior que 10MB
-    - [ ] retornando o código de status 204 em caso de sucesso
-- [ ] uma rota `GET /static/video/:filename` que pode receber um Range por cabeçalho para indicar o offset de streaming
-    - [ ] retornando o código de status 404 em caso de não existência de um arquivo
-    - [ ] retornando o conteúdo completo caso nenhum range seja especificado com código de status 200 em caso o arquivo exista no servidor
-    - [ ] retornando a fatia desejada do conteúdo caso o range seja especificado com código de status 206
-    caso o arquivo exista no servidor
+- [x] uma rota `POST /upload/video` que recebe um **único vídeo** com limite de 10MB e
+  - [x] retornando o código de status 400 em caso de arquivo com tipo diferente de vídeo
+  - [x] retornando o código de status 400 em caso de arquivo com tamanho maior que 10MB
+  - [x] retornando o código de status 204 em caso de sucesso
+- [x] uma rota `GET /static/video/:filename` que pode receber um Range por cabeçalho para indicar o offset de streaming
+  - [x] retornando o código de status 404 em caso de não existência de um arquivo
+  - [x] retornando o conteúdo completo caso nenhum range seja especificado com código de status 200 em caso o arquivo exista no servidor
+  - [x] retornando a fatia desejada do conteúdo caso o range seja especificado com código de status 206
+        caso o arquivo exista no servidor
 
 Para infra, vamos usar o seguinte conjunto:
 
-- [ ] um arquivo `Dockerfile` para fazer o build da imagem a partir da imagem `node:22-alpine`;
-- [ ] um arquivo `docker-compose.yml` para compor um ambiente com algum serviço de cache de sua escolha.
+- [x] um arquivo `Dockerfile` para fazer o build da imagem a partir da imagem `node:22-alpine`;
+- [x] um arquivo `docker-compose.yml` para compor um ambiente com algum serviço de cache de sua escolha.
 
 ```plain
 A ideia inicial é que os arquivos sejam armazenados dentro do volume do container da aplicação.
@@ -50,3 +51,7 @@ Este teste busca avaliar as seguintes competências:
 5. Domínio sobre a runtime `node.js`;
 6. Capacidade de organização de código (Adendo: organize da forma que for mais familiarizado, não estamos olhando para a estrutura de pastas, mas sim para a coesão e o desacoplamento) e
 7. Capacidade de lidar com contêineres Docker.
+
+## Instruções para rodar
+
+1. Baixe o projeto e rode `docker compose up`
