@@ -43,6 +43,6 @@ export class VideoController {
       req.headers['range'] as string,
     );
 
-    res.status(HttpStatus.PARTIAL_CONTENT).json({ data });
+    res.status(HttpStatus.PARTIAL_CONTENT).json(data);
   }
 }

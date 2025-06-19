@@ -56,11 +56,15 @@ export class VideoService {
         false,
       );
 
+    const buffer = Buffer.from(existingVideo, 'base64');
+
     if (!range) {
-      return existingVideo
+      return {
+        chunk: buffer,
+        status: HttpStatus.OK,
+      };
     }
 
-    const buffer = Buffer.from(existingVideo, 'base64');
     const fileSize = buffer.length;
 
     const parts = range.replace(/bytes=/, '').split('-');
@@ -77,6 +81,9 @@ export class VideoService {
 
     const chunk = buffer.subarray(start, end + 1);
 
-    return chunk;
+    return {
+      chunk,
+      status: HttpStatus.PARTIAL_CONTENT,
+    };
   }
 }
