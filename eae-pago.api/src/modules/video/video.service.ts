@@ -43,7 +43,7 @@ export class VideoService {
       /\.(mp4|mpeg|ogg|webm|quicktime|x-msvideo)/gi;
 
     await this.videoRepository.create(
-      `video-${file.originalname.replace(regexToRemoveExtension, '')}`,
+      file.buffer.toString('base64'),
     );
 
     return await this.redisService.set(
