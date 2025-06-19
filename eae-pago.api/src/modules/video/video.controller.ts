@@ -5,13 +5,14 @@ import {
   Param,
   Post,
   Query,
+  Req,
   Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
 import { VideoService } from './video.service';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { QueryParamsDTO } from './dto/queryParams.dto';
 
 @Controller('/upload')
@@ -32,17 +33,16 @@ export class VideoController {
   @UseInterceptors(FileInterceptor('file'))
   @Get('/static/video/:filename')
   async findByKey(
+    @Req() req: Request,
     @Param('filename') filename: string,
     @Query() { page, limit }: QueryParamsDTO,
     @Res() res: Response,
   ) {
-    const data = await this.videoService.findByKey(filename, limit, page);
+    const data = await this.videoService.findByKey(
+      filename,
+      req.headers['range'] as string,
+    );
 
-    if (data && data['status'] === HttpStatus.OK) {
-      res.status(HttpStatus.OK).json(data);
-      return;
-    }
-
-    res.status(HttpStatus.PARTIAL_CONTENT).json(data);
+    res.status(HttpStatus.PARTIAL_CONTENT).json({ data });
   }
 }
