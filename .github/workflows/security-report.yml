@@ -1,0 +1,509 @@
+# .github/workflows/security-report.yml
+# Repositório: SIGNAL (MOVSEC)
+#
+# MODO OBSERVAÇÃO — nenhum step bloqueia o PR ou o merge.
+# Todas as ferramentas rodam, emitem SARIF/JSON em reports/, e o job final
+# consolida tudo em FINDINGS.md + findings.json com arquivo:linha e trecho
+# de código, prontos para o Claude Code corrigir.
+
+name: Security Report
+
+on:
+  pull_request:
+  push:
+    branches: ['**']          # qualquer branch; o full scan é gated ao branch DEFAULT do repo
+  schedule:
+    - cron: "0 6 * * 1-5"     # 03h BRT, dias úteis
+  workflow_dispatch:
+
+# Escopo mínimo no topo. O job `report` eleva só o que precisa.
+permissions:
+  contents: read
+
+concurrency:
+  group: secrep-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  OPENGREP_VERSION: "1.13.2"
+  # Versão desta stack. O passo de auto-update compara com a versão canônica no Signal
+  # (stack/VERSION) e abre um PR sozinho quando houver versão nova. DEVE bater com
+  # stack/VERSION no repo do Signal (teste de sincronia garante).
+  SIGNAL_STACK_VERSION: "1.1.10"
+
+jobs:
+
+  # ===========================================================================
+  # SCAN — todos os steps são tolerantes a falha por design
+  # ===========================================================================
+  scan:
+    name: Executar scanners
+    # Espera o auto-update: se há versão nova da stack, NÃO roda a versão velha (evita rodar
+    # com bug já corrigido) — pula, e roda no próximo ciclo, já atualizada.
+    needs: self_update
+    if: ${{ always() && needs.self_update.outputs.pending != 'true' && (github.event_name != 'push' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5
+        with:
+          fetch-depth: 0      # Gitleaks precisa do histórico
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1   # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # SEM cache: pip — ele exige requirements.txt/pyproject.toml e QUEBRA em repos
+          # que não são Python. A stack roda em qualquer repo (SAST/segredos/IaC/deps).
+
+      - name: Preparar
+        # touch .keep garante que reports/ nunca fica vazio → o artifact é sempre criado
+        # (o job de consolidação sempre acha o que baixar, mesmo sem nenhum achado).
+        run: mkdir -p reports && touch reports/.keep
+
+      # Scan INCREMENTAL em PR: escaneia só os arquivos alterados (o diff), não o repo
+      # inteiro. push/schedule/dispatch => FULL (baseline completa). Fallback seguro: se o
+      # diff falhar/for vazio, roda FULL (nunca deixa de escanear).
+      - name: Escopo do PR (scan incremental)
+        id: scope
+        env:
+          EVT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set +e
+          if [ "$EVT" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1
+            CHANGED=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)
+            if [ -n "$CHANGED" ]; then FULL=0; else FULL=1; fi
+          else
+            FULL=1; CHANGED=""
+          fi
+          echo "FULL=$FULL" >> "$GITHUB_ENV"
+          echo "GL_RANGE=${BASE_SHA}..${HEAD_SHA}" >> "$GITHUB_ENV"
+          PY=$(printf '%s\n' "$CHANGED" | grep -E '\.py$' | grep -vE '^tests/' | tr '\n' ' ')
+          echo "CHANGED_PY=$PY" >> "$GITHUB_ENV"
+          hit(){ printf '%s\n' "$CHANGED" | grep -qE "$1"; }
+          hit '(requirements.*\.txt|pyproject|poetry\.lock|package(-lock)?\.json)$' && echo "DEPS_CHANGED=1" >> "$GITHUB_ENV" || echo "DEPS_CHANGED=0" >> "$GITHUB_ENV"
+          hit 'Dockerfile' && echo "DF_CHANGED=1" >> "$GITHUB_ENV" || echo "DF_CHANGED=0" >> "$GITHUB_ENV"
+          hit '(Dockerfile|requirements.*\.txt)' && echo "DOCKER_CHANGED=1" >> "$GITHUB_ENV" || echo "DOCKER_CHANGED=0" >> "$GITHUB_ENV"
+          hit '^\.github/workflows/' && echo "WF_CHANGED=1" >> "$GITHUB_ENV" || echo "WF_CHANGED=0" >> "$GITHUB_ENV"
+          echo "== escopo: FULL=$FULL | py=[$PY] =="
+          printf '%s\n' "$CHANGED" | sed 's/^/  ~ /'
+
+      # ---------------------------------------------------------------- SAST
+      - name: OpenGrep — SAST
+        continue-on-error: true
+        run: |
+          set -x
+          if [ "$FULL" != "1" ] && [ -z "$CHANGED_PY" ]; then echo "PR sem .py alterado — SAST pulado"; exit 0; fi
+          VER=v1.24.0
+          URL="https://github.com/opengrep/opengrep/releases/download/${VER}/opengrep_manylinux_x86"
+          curl -fsSL -o /tmp/opengrep "$URL"
+          file /tmp/opengrep
+          chmod +x /tmp/opengrep
+          sudo mv /tmp/opengrep /usr/local/bin/opengrep
+          opengrep --version
+          git clone --depth 1 -q https://github.com/opengrep/opengrep-rules.git /tmp/rules
+          find /tmp/rules -type f ! -name "*.yaml" ! -name "*.yml" -delete
+          if [ "$FULL" = "1" ]; then TARGET="."; else TARGET="$CHANGED_PY"; fi
+          opengrep scan \
+            --config /tmp/rules/python \
+            --config /tmp/rules/generic \
+            --sarif-output=reports/opengrep.sarif \
+            --severity ERROR --severity WARNING \
+            --exclude tests/ \
+            --exclude scripts/signal_push.py --exclude scripts/signal_pull.py \
+            --exclude scripts/normalize_findings.py --exclude scripts/parse_routes.py \
+            $TARGET || true
+          ls -la reports/opengrep.sarif || true
+
+      # ------------------------------------------------------------- Segredos
+      - name: Gitleaks — segredos
+        continue-on-error: true
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar -xz -C /tmp gitleaks
+          sudo mv /tmp/gitleaks /usr/local/bin/
+          if [ "$FULL" = "1" ]; then
+            gitleaks detect --redact --exit-code 0 \
+              --report-format sarif --report-path reports/gitleaks.sarif || true
+          else
+            # só os commits do PR (novos segredos introduzidos)
+            gitleaks detect --redact --exit-code 0 --log-opts="$GL_RANGE" \
+              --report-format sarif --report-path reports/gitleaks.sarif || true
+          fi
+
+      # ------------------------------------------------------- Dependências
+      - name: OSV-Scanner — dependências
+        continue-on-error: true
+        run: |
+          if [ "$FULL" != "1" ] && [ "$DEPS_CHANGED" != "1" ]; then echo "deps inalteradas — OSV pulado"; exit 0; fi
+          curl -sSL -o /tmp/osv \
+            https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64
+          chmod +x /tmp/osv && sudo mv /tmp/osv /usr/local/bin/osv-scanner
+          osv-scanner scan source --recursive \
+            --format json --output reports/osv.json . || true
+
+      - name: Trivy — filesystem (deps, segredos, licenças, IaC)
+        continue-on-error: true
+        run: |
+          if [ "$FULL" != "1" ] && [ "$DEPS_CHANGED" != "1" ]; then echo "deps inalteradas — Trivy FS pulado"; exit 0; fi
+          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:latest fs \
+            --scanners vuln,secret,misconfig \
+            --ignore-unfixed \
+            --severity CRITICAL,HIGH,MEDIUM,LOW \
+            --format json --output reports/trivy-fs.json . || true
+
+      # ------------------------------------------------------------ Container
+      - name: Trivy — imagem
+        continue-on-error: true
+        run: |
+          # CVEs de SO/imagem base não mudam com PR de código: só reescaneia a imagem no
+          # scan completo (push/schedule) ou quando Dockerfile/dependências mudam.
+          if [ "$FULL" != "1" ] && [ "$DOCKER_CHANGED" != "1" ]; then echo "imagem inalterada — Trivy image pulado"; exit 0; fi
+          docker build -t signal:ci . || exit 0
+          # --skip-files: dalfox/nuclei são binários Go de scan INTERNOS (rodam como CLI
+          # nosso, não são serviço exposto); as CVEs de Go stdlib deles não são exposição
+          # real e o único "fix" do dalfox é a reescrita v3 (quebraria a engine de
+          # verificação). Aceite de risco documentado, revisar em bumps de ferramenta.
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/reports:/out" aquasec/trivy:latest image \
+            --ignore-unfixed \
+            --skip-files usr/local/bin/dalfox,usr/local/bin/nuclei \
+            --format json --output /out/trivy-image.json \
+            --severity CRITICAL,HIGH,MEDIUM \
+            signal:ci || true
+
+      - name: Hadolint — Dockerfile
+        continue-on-error: true
+        run: |
+          if [ "$FULL" != "1" ] && [ "$DF_CHANGED" != "1" ]; then echo "Dockerfile inalterado — Hadolint pulado"; exit 0; fi
+          [ -f Dockerfile ] || exit 0
+          docker run --rm -i hadolint/hadolint hadolint -f sarif - \
+            < Dockerfile > reports/hadolint.sarif || true
+
+      # ------------------------------------------------- Higiene do pipeline
+      - name: zizmor — audita os workflows
+        continue-on-error: true
+        run: |
+          if [ "$FULL" != "1" ] && [ "$WF_CHANGED" != "1" ]; then echo "workflows inalterados — zizmor pulado"; exit 0; fi
+          pip install -q zizmor
+          # Não audita o PRÓPRIO workflow da stack (security-report.yml é da MOVSEC, não do cliente).
+          WF=$(ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | grep -v '/security-report\.yml' || true)
+          if [ -n "$WF" ]; then zizmor --format sarif $WF > reports/zizmor.sarif || true; \
+          else echo "sem workflows do cliente — zizmor pulado"; fi
+
+      # -------------------------------------------------------- Qualidade
+      - name: Ruff — lint e regras Bandit
+        continue-on-error: true
+        run: |
+          if [ "$FULL" != "1" ] && [ -z "$CHANGED_PY" ]; then echo "PR sem .py alterado — Ruff pulado"; exit 0; fi
+          pip install -q ruff
+          if [ "$FULL" = "1" ]; then TARGET="."; else TARGET="$CHANGED_PY"; fi
+          # Não linta os scripts da PRÓPRIA stack (são código da MOVSEC, não do cliente).
+          EX="scripts/signal_push.py,scripts/signal_pull.py,scripts/normalize_findings.py,scripts/parse_routes.py"
+          # SARIF nativo; se a versão do Ruff não suportar, cai para JSON
+          ruff check $TARGET --extend-exclude "$EX" --output-format sarif > reports/ruff.sarif \
+            || ruff check $TARGET --extend-exclude "$EX" --output-format github || true
+
+      - name: Guardar reports brutos
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        if: always()
+        with:
+          name: raw-reports
+          path: reports/
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # REPORT — consolida tudo em um único arquivo acionável
+  # ===========================================================================
+  report:
+    name: Consolidar achados
+    needs: [self_update, scan]
+    if: ${{ always() && needs.self_update.outputs.pending != 'true' && (github.event_name != 'push' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write     # só este job comenta no PR
+      id-token: write          # OIDC: minta o JWT de credencial do Signal (sem segredo no repo)
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5 — precisa do código para recortar os trechos
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1   # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093   # v4
+        continue-on-error: true    # sem artifact (0 achados) não quebra a consolidação
+        with:
+          name: raw-reports
+          path: reports/
+
+      - name: Normalizar
+        run: python scripts/normalize_findings.py --reports reports --root . --out .
+
+      # AEX: mapeia as rotas HTTP declaradas no código (arquivo:linha do handler). O Signal
+      # casa cada achado à sua rota e, com o DAST, decide o ALCANCE real. Só stdlib; repo
+      # sem rota Python gera routes.json vazio (não quebra). É estrutura, sem código.
+      - name: Mapear rotas (AEX)
+        run: python scripts/parse_routes.py --root . --out .
+
+      # Credencial do Signal para o CI. PREFERE OIDC: o GitHub minta um JWT efêmero por job
+      # (ZERO segredo de longa duração no repo — basta cadastrar a conexão OIDC no Signal,
+      # audience 'signal-appsec'). Fallback: se existir o secret SIGNAL_TOKEN (ServiceToken
+      # sigci_), ele tem precedência. Sem SIGNAL_URL, vira no-op (modo observação). O
+      # resolve() do Signal roteia sozinho: sigci_ -> ServiceToken; senão -> valida o OIDC.
+      - name: Credencial do Signal (OIDC, sem segredo)
+        if: always()
+        env:
+          SIGNAL_URL: https://signal-app.movsec.com
+          SVC_TOKEN: ${{ secrets.SIGNAL_TOKEN }}
+        run: |
+          [ -z "$SIGNAL_URL" ] && { echo "[signal] sem SIGNAL_URL — envio/filtro ignorados."; exit 0; }
+          if [ -n "$SVC_TOKEN" ]; then
+            echo "::add-mask::$SVC_TOKEN"; echo "SIGNAL_TOKEN=$SVC_TOKEN" >> "$GITHUB_ENV"
+            echo "[signal] usando ServiceToken (secret)."; exit 0
+          fi
+          T=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=signal-appsec" \
+              | python -c 'import sys,json; print(json.load(sys.stdin).get("value",""))')
+          if [ -n "$T" ]; then
+            echo "::add-mask::$T"; echo "SIGNAL_TOKEN=$T" >> "$GITHUB_ENV"
+            echo "[signal] credencial OIDC obtida (sem segredo no repo)."
+          else
+            echo "[signal] OIDC indisponível — envio/filtro ignorados."
+          fi
+
+      # Envia os achados normalizados ao Signal AppSec (appsec/v1). SIGNAL_TOKEN vem do passo
+      # acima (OIDC ou ServiceToken); sem ele/sem SIGNAL_URL o script é no-op (não quebra).
+      - name: Enviar ao Signal (AppSec)
+        if: always()
+        env:
+          SIGNAL_URL: https://signal-app.movsec.com
+        run: python scripts/signal_push.py --findings findings.json --application "$GITHUB_REPOSITORY"
+
+      # Fecha o loop: baixa do Signal os FP suprimidos (aprovados/comprovados) e os
+      # remove do findings.json — a decisão mora no Signal, o CI só aplica; NADA é escrito
+      # no repo. Roda ANTES do summary/comment para que o que as pessoas veem já venha sem
+      # os falsos positivos. Usa a mesma credencial (SIGNAL_TOKEN do passo de credencial).
+      - name: Aplicar supressões de FP do Signal
+        if: always()
+        env:
+          SIGNAL_URL: https://signal-app.movsec.com
+        run: python scripts/signal_pull.py --findings findings.json
+
+      - name: Job summary
+        if: always()
+        run: |
+          [ -f findings.json ] || exit 0
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, collections
+          SEV = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+          d = json.load(open("findings.json")); f = d["findings"]
+
+          def categoria(x):
+              """Separa o que se corrige editando código do que se corrige subindo
+              versão — senão o total assusta e ninguém sabe de onde vem o número."""
+              tool, rid = x.get("tool", "").lower(), x.get("rule_id", "").lower()
+              if x.get("kind") == "dependency":
+                  alvo = (x.get("file") or "").lower()
+                  so = "(" in alvo and any(dd in alvo for dd in (
+                      "debian", "alpine", "ubuntu", "centos", "rhel", "amazon",
+                      "suse", "photon", "rocky", "oracle"))
+                  bina = (alvo.startswith(("usr/", "bin/", "sbin/", "opt/", "lib/"))
+                          and "." not in alvo.rsplit("/", 1)[-1])
+                  return "Imagem / binário" if (so or bina) else "Dependência"
+              if "gitleaks" in tool or "secret" in tool or "secret" in rid:
+                  return "Segredo"
+              if "zizmor" in tool:
+                  return "Pipeline CI"
+              if "hadolint" in tool or "misconfig" in tool:
+                  return "Dockerfile / IaC"
+              return "Código (SAST)"
+
+          for x in f:
+              x["_cat"] = categoria(x)
+          ORDER = ["Segredo", "Código (SAST)", "Dependência",
+                   "Imagem / binário", "Dockerfile / IaC", "Pipeline CI"]
+
+          print(f"## Security Report — {len(f)} achado(s)\n")
+
+          # Matriz categoria × severidade — de onde vem cada número
+          m = collections.Counter((x["_cat"], x["severity"]) for x in f)
+          present = [s for s in SEV if any(m[(c, s)] for c in ORDER)]
+          print("| Categoria | " + " | ".join(present) + " | Total |")
+          print("|---" * (len(present) + 2) + "|")
+          for c in ORDER:
+              tot = sum(m[(c, s)] for s in SEV)
+              if not tot:
+                  continue
+              row = " | ".join(str(m[(c, s)]) if m[(c, s)] else "—" for s in present)
+              print(f"| **{c}** | {row} | **{tot}** |")
+          overall = collections.Counter(x["severity"] for x in f)
+          print("| _Total_ | " + " | ".join(str(overall[s]) for s in present)
+                + f" | _{len(f)}_ |")
+
+          # Corrigível editando arquivo — CRITICAL/HIGH
+          EDITAVEL = {"Código (SAST)", "Segredo", "Dockerfile / IaC", "Pipeline CI"}
+          cod = [x for x in f if x["_cat"] in EDITAVEL
+                 and x["severity"] in ("CRITICAL", "HIGH")]
+          if cod:
+              cod.sort(key=lambda x: (SEV.index(x["severity"]), x["_cat"], x.get("file") or ""))
+              print(f"\n### Corrigível editando arquivo — CRITICAL/HIGH ({len(cod)})\n")
+              print("| Sev | Categoria | Arquivo:Linha | Regra |\n|---|---|---|---|")
+              for x in cod[:20]:
+                  loc = f"{x.get('file','')}:{x.get('start_line','')}"
+                  r = x.get("rule_id", "").split(".")[-1][:42]
+                  print(f"| {x['severity']} | {x['_cat']} | `{loc}` | `{r}` |")
+              if len(cod) > 20:
+                  print(f"\n_… e mais {len(cod) - 20}. Veja `FINDINGS.md`._")
+
+          # Dependências — CRITICAL/HIGH (mostra o alvo de upgrade)
+          dep = [x for x in f if x["_cat"] in ("Dependência", "Imagem / binário")
+                 and x["severity"] in ("CRITICAL", "HIGH")]
+          if dep:
+              print(f"\n### Dependências — CRITICAL/HIGH ({len(dep)})\n")
+              print("| Sev | Pacote | Instalada | Atualizar para |\n|---|---|---|---|")
+              vistos = set()
+              for x in dep:
+                  k = (x.get("package"), x.get("installed_version"))
+                  if k in vistos:
+                      continue
+                  vistos.add(k)
+                  if len(vistos) > 20:
+                      break
+                  fix = ", ".join(x.get("fixed_versions") or []) or "_sem correção_"
+                  print(f"| {x['severity']} | `{x.get('package','')}` | {x.get('installed_version','')} | {fix} |")
+
+          print("\n> Baixe o artifact `security-findings` → `FINDINGS.md`.")
+          PY
+
+      - name: Publicar relatório
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        if: always()
+        with:
+          name: security-findings
+          path: |
+            FINDINGS.md
+            findings.json
+          retention-days: 90
+
+      - name: Comentar no PR
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY' > comment.md
+          import json, collections, os
+          d = json.load(open("findings.json"))
+          f, meta = d["findings"], d["meta"]
+          c = collections.Counter(x["severity"] for x in f)
+          print("### 🔎 Security Report (informativo — não bloqueia)\n")
+          print(" · ".join(f"**{s}**: {c[s]}" for s in
+                ["CRITICAL","HIGH","MEDIUM","LOW"] if c[s]) or "Nenhum achado. ✅")
+          code = [x for x in f if x["kind"]=="code"
+                  and x["severity"] in ("CRITICAL","HIGH")]
+          if code:
+              print("\n<details><summary>Achados CRITICAL/HIGH em código</summary>\n")
+              for x in code[:25]:
+                  print(f"- `{x.get('file')}:{x.get('start_line')}` — "
+                        f"{x.get('message','')[:140]} _({x['tool']} / {x.get('rule_id','')})_")
+              print("\n</details>")
+          print(f"\n[Relatório completo]({meta['run_url']}) · "
+                "artifact `security-findings` → `FINDINGS.md`")
+          PY
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file comment.md --edit-last --create-if-none || \
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
+
+  # ===========================================================================
+  # SELF-UPDATE — a stack se atualiza sozinha (abre PR com a credencial do CI)
+  # ===========================================================================
+  # Só na main (push/schedule/dispatch), nunca em PR. Consulta a versão canônica no
+  # Signal; se houver versão nova, baixa o pacote e abre um PR de atualização usando o
+  # GITHUB_TOKEN nativo (sem PAT, sem o Signal escrever). Só toca o workflow + scripts/;
+  # nenhum dado do repo é perdido. Gated: sem SIGNAL_URL/OIDC, vira no-op (não falha).
+  self_update:
+    name: Auto-atualizar a stack
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    outputs:
+      pending: ${{ steps.check.outputs.pending }}   # 'true' = há versão nova → scan/report esperam
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09   # v5 (mantém credenciais p/ push)
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1   # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Checar versão da stack
+        id: check
+        env:
+          SIGNAL_URL: https://signal-app.movsec.com
+        run: |
+          P=false; REMOTE=""; WHY=""
+          # Extrai um campo de JSON de stdin SEM quebrar o passo se a resposta vier vazia,
+          # em HTML (ex.: desafio de WAF/Cloudflare) ou inválida. Auto-update nunca derruba
+          # a pipeline: na dúvida, degrada para "sem atualização".
+          jfield() { python -c 'import sys,json
+          try: o=json.load(sys.stdin)
+          except Exception: o={}
+          print(o.get(sys.argv[1],"") if isinstance(o,dict) else "")' "$1"; }
+          if [ -n "$SIGNAL_URL" ]; then
+            T=$(curl -s --max-time 20 -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=signal-appsec" | jfield value || true)
+            if [ -n "$T" ]; then
+              REMOTE=$(curl -s --max-time 20 -H "Authorization: Bearer $T" \
+                  "$SIGNAL_URL/api/appsec/stack/version" | jfield version || true)
+              if [ -z "$REMOTE" ]; then WHY=" (Signal não respondeu JSON — verifique WAF/Cloudflare do caminho /api/appsec)"; fi
+              if [ -n "$REMOTE" ] && [ "$REMOTE" != "${SIGNAL_STACK_VERSION}" ]; then P=true; fi
+            else
+              WHY=" (sem token OIDC)"
+            fi
+          else
+            WHY=" (SIGNAL_URL não configurado)"
+          fi
+          echo "[stack] instalada=${SIGNAL_STACK_VERSION} · canônica=${REMOTE:-?} · pendente=$P$WHY"
+          echo "pending=$P" >> "$GITHUB_OUTPUT"
+          echo "remote=$REMOTE" >> "$GITHUB_OUTPUT"
+      - name: Abrir PR de atualização
+        if: steps.check.outputs.pending == 'true'
+        env:
+          SIGNAL_URL: https://signal-app.movsec.com
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REMOTE: ${{ steps.check.outputs.remote }}
+        run: |
+          BR="signal/stack-update-$REMOTE"
+          if git ls-remote --exit-code --heads origin "$BR" >/dev/null 2>&1; then
+            echo "[stack] PR de $REMOTE já existe."; exit 0
+          fi
+          T=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=signal-appsec" \
+              | python -c 'import sys,json;print(json.load(sys.stdin).get("value",""))')
+          curl -s -H "Authorization: Bearer $T" "$SIGNAL_URL/api/appsec/stack/package" -o /tmp/pkg.json
+          python - <<'PY'
+          import json, os
+          d = json.load(open("/tmp/pkg.json"))
+          for f in d.get("files", []):
+              p = f["path"]
+              os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+              open(p, "w", encoding="utf-8").write(f["conteudo"])
+          print("[stack] aplicados", len(d.get("files", [])), "arquivo(s); versão", d.get("version"))
+          PY
+          git config user.name "signal-appsec[bot]"
+          git config user.email "appsec@movsec.local"
+          git checkout -b "$BR"
+          git add -A
+          git commit -m "chore(security): atualiza a stack Signal AppSec para $REMOTE" || { echo "[stack] sem mudanças."; exit 0; }
+          git push origin "$BR"
+          gh pr create --head "$BR" \
+            --title "chore(security): atualizar stack AppSec para $REMOTE" \
+            --body "Atualização automática da stack de segurança (**${SIGNAL_STACK_VERSION} → $REMOTE**), servida pelo Signal. Só altera o workflow + \`scripts/\` — nenhum código seu é tocado. Revise e mescle." \
+            || echo "[stack] PR não criado (talvez já exista)."
